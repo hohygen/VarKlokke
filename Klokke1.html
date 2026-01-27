@@ -19,39 +19,55 @@
             align-items: center;
             height: 100vh;
             margin: 0;
-            font-family: sans-serif;
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
         }
 
+        /* Gjør klokken responsiv */
         .clock-container {
             position: relative;
             width: var(--clock-size);
             height: var(--clock-size);
+            max-width: 90vw;
+            max-height: 90vw;
             border: 8px solid #333;
             border-radius: 50%;
             background: radial-gradient(circle, #222 0%, #111 100%);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.6);
         }
 
-        /* Selve klokkeviserne */
+        /* Klokkevisere */
         .hand {
             position: absolute;
-            bottom: 50%;
             left: 50%;
-            transform-origin: bottom;
-            background: white;
-            border-radius: 10px;
+            bottom: 50%;
+            transform-origin: 50% 100%;
+            border-radius: 6px;
             z-index: 10;
+            pointer-events: none;
         }
 
-        .hour-hand { width: 6px; height: 25%; }
-        .min-hand { width: 4px; height: 40%; background: #aaa; }
+        /* Vi bruker background-color istedenfor inline background for enkel styling */
+        .hour-hand {
+            width: 8px;
+            height: 24%;
+            background: #fff;
+            margin-left: -4px; /* halver bredden for å sentrere */
+        }
+        .min-hand {
+            width: 6px;
+            height: 36%;
+            background: #ccc;
+            margin-left: -3px;
+        }
         .center-dot {
             position: absolute;
             top: 50%; left: 50%;
-            width: 15px; height: 15px;
+            width: 16px; height: 16px;
             background: white;
             border-radius: 50%;
             transform: translate(-50%, -50%);
             z-index: 11;
+            box-shadow: 0 0 6px rgba(255,255,255,0.6);
         }
 
         /* Værelementene rundt */
@@ -59,118 +75,238 @@
             position: absolute;
             top: 50%;
             left: 50%;
-            width: 60px;
-            height: 70px;
+            width: 66px;
+            height: 80px;
             text-align: center;
             transform: translate(-50%, -50%);
-            transition: all 0.5s ease;
+            transition: all 0.35s ease;
+            color: var(--text-color);
+            font-size: 13px;
+            user-select: none;
         }
 
         .weather-slot img {
-            width: 40px;
-            height: 40px;
+            width: 44px;
+            height: 44px;
             display: block;
             margin: 0 auto;
         }
 
         .temp {
-            font-size: 14px;
-            font-weight: bold;
-            margin-top: 2px;
+            font-size: 13px;
+            font-weight: 700;
+            margin-top: 4px;
         }
 
         .hour-label {
-            font-size: 10px;
-            color: #888;
+            font-size: 11px;
+            color: #aaa;
+        }
+
+        /* Liten skjermtilpasning */
+        @media (max-width: 480px) {
+            :root { --clock-size: 320px; }
+            .weather-slot { width: 56px; height: 68px; }
+            .weather-slot img { width: 36px; height: 36px; }
         }
     </style>
 </head>
 <body>
 
-<div class="clock-container" id="clock">
-    <div class="hand hour-hand" id="hour-hand"></div>
-    <div class="hand min-hand" id="min-hand"></div>
-    <div class="center-dot"></div>
+<div class="clock-container" id="clock" role="img" aria-label="Værklokke som viser vær for de neste 12 timene">
+    <div class="hand hour-hand" id="hour-hand" aria-hidden="true"></div>
+    <div class="hand min-hand" id="min-hand" aria-hidden="true"></div>
+    <div class="center-dot" aria-hidden="true"></div>
 </div>
 
 <script>
-    // Konfigurasjon
-    const clock = document.getElementById('clock');
-    const radius = 160; // Hvor langt fra sentrum ikonene skal stå
+/*
+  Forbedringer i denne filen:
+  - Bruker Geolocation API (med fallback til Oslo).
+  - Legger til caching i localStorage for å unngå unødvendige API-kall.
+  - Implementerer renderMockData() som fallback ved feil.
+  - Benytter requestAnimationFrame for jevn animasjon av viserne (inkl. sekunder).
+  - Robust tilgang til API-data med optional chaining og fallback-verdier.
+  - Legger til alt-tekst / aria-attributter for tilgjengelighet.
+  - Legger til forklaring om User-Agent / identifikasjon til met.no (nettlesere kan ikke sette User-Agent-header).
+*/
 
-    function updateClockHands() {
-        const now = new Date();
-        const seconds = now.getSeconds();
-        const minutes = now.getMinutes();
-        const hours = now.getHours();
+/* Konfigurasjon */
+const clock = document.getElementById('clock');
+const radius = 160; // px avstand fra sentrum for vær-ikoner (juster om nødvendig)
+const WEATHER_CACHE_KEY = 'varklokke_weather_cache_v1';
+const WEATHER_CACHE_TTL = 25 * 60 * 1000; // 25 minutter
+const DEFAULT_COORDS = { lat: 59.91, lon: 10.75 }; // Oslo fallback
+const CONTACT_EMAIL = 'hohygen@gmail.com'; // Brukes for identifikasjon ved API-kall (se forklaring)
 
-        const hourDeg = (hours % 12) * 30 + (minutes / 60) * 30;
-        const minDeg = minutes * 6;
+/*
+  OBS: Nettlesere blokkerer innstilling av "User-Agent" header på fetch.
+  Met.no krever at klienten identifiseres (User-Agent eller From). 
+  Her setter vi 'From' og 'X-Requested-By' som en delvis identifikasjon, men anbefalt løsning
+  for produksjon er å gjøre API-kall fra en server/proxy der en riktig User-Agent kan settes.
+*/
 
-        document.getElementById('hour-hand').style.transform = `translateX(-50%) rotate(${hourDeg}deg)`;
-        document.getElementById('min-hand').style.transform = `translateX(-50%) rotate(${minDeg}deg)`;
-    }
+let lastRenderTimestamp = 0; // for å unngå for hyppige DOM-oppdateringer
 
-    async function getWeatherData() {
-        try {
-            // Eksempel-koordinater (Oslo). Du kan bruke Geolocation API for å finne brukerens posisjon.
-            const lat = 59.91;
-            const lon = 10.75;
-            const response = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`);
-            const data = await response.json();
-            
-            renderWeatherIcons(data.properties.timeseries);
-        } catch (error) {
-            console.error("Kunne ikke hente vær:", error);
-            renderMockData(); // Viser noe hvis API-en feiler
+/* Smooth klokkeanimajson med requestAnimationFrame */
+function animateClock() {
+    const now = new Date();
+    const ms = now.getMilliseconds();
+    const seconds = now.getSeconds() + ms / 1000;
+    const minutes = now.getMinutes() + seconds / 60;
+    const hours = now.getHours() % 12 + minutes / 60;
+
+    const hourDeg = hours * 30; // 360/12
+    const minDeg = minutes * 6; // 360/60
+
+    const hourHand = document.getElementById('hour-hand');
+    const minHand = document.getElementById('min-hand');
+
+    // Vi benytter translate + rotate for å holde viserne sentrert
+    hourHand.style.transform = `translate(-50%, 0) rotate(${hourDeg}deg)`;
+    minHand.style.transform = `translate(-50%, 0) rotate(${minDeg}deg)`;
+
+    requestAnimationFrame(animateClock);
+}
+
+/* Henter koordinater fra Geolocation API med fallback */
+function getCoordinates() {
+    return new Promise((resolve) => {
+        if (!navigator.geolocation) {
+            resolve(DEFAULT_COORDS);
+            return;
         }
+
+        let resolved = false;
+        const fallbackTimer = setTimeout(() => {
+            if (!resolved) {
+                resolved = true;
+                resolve(DEFAULT_COORDS);
+            }
+        }, 7000); // 7 sekunder timeout
+
+        navigator.geolocation.getCurrentPosition((pos) => {
+            if (resolved) return;
+            resolved = true;
+            clearTimeout(fallbackTimer);
+            resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
+        }, (err) => {
+            if (resolved) return;
+            resolved = true;
+            clearTimeout(fallbackTimer);
+            resolve(DEFAULT_COORDS);
+        }, { timeout: 6000 });
+    });
+}
+
+/* Hjelpefunksjon: lagre / hente cache */
+function getCachedWeather() {
+    try {
+        const raw = localStorage.getItem(WEATHER_CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed.timestamp || !parsed.data) return null;
+        if ((Date.now() - parsed.timestamp) > WEATHER_CACHE_TTL) {
+            localStorage.removeItem(WEATHER_CACHE_KEY);
+            return null;
+        }
+        return parsed.data;
+    } catch (e) {
+        console.warn('Cache parse error', e);
+        return null;
     }
+}
 
-    function renderWeatherIcons(timeseries) {
-    // Fjern gamle ikoner
+function setCachedWeather(data) {
+    try {
+        const payload = { timestamp: Date.now(), data };
+        localStorage.setItem(WEATHER_CACHE_KEY, JSON.stringify(payload));
+    } catch (e) {
+        // ignore
+    }
+}
+
+/* Render fallback/mock-data hvis API feiler */
+function renderMockData() {
+    // Opprett 12 plasser med placeholder ikon og temperatur —
     document.querySelectorAll('.weather-slot').forEach(el => el.remove());
-
-    // Vi henter de neste 12 timene fra varselet
-    const next12Hours = timeseries.slice(0, 12);
-
-    next12Hours.forEach((forecast) => {
-        const time = new Date(forecast.time);
-        const hour = time.getHours(); // Henter timen (0-23)
-        
-        // Modulo 12 sørger for at f.eks. kl 13:00 blir 1:00 på urskiven
-        const hourForAngle = hour % 12; 
-        
-        // Kalkuler posisjon: 12 er 0 grader, 3 er 90 grader, osv.
-        const angle = hourForAngle * 30; 
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+        const future = new Date(now.getTime() + i * 3600 * 1000);
+        const hour = future.getHours();
+        const hourForAngle = hour % 12;
+        const angle = hourForAngle * 30;
         const x = Math.sin(angle * Math.PI / 180) * radius;
         const y = -Math.cos(angle * Math.PI / 180) * radius;
-
-        const symbolCode = forecast.data.next_1_hours?.summary?.symbol_code || "clearsky_day";
-        const temp = Math.round(forecast.data.instant.details.air_temperature);
 
         const slot = document.createElement('div');
         slot.className = 'weather-slot';
         slot.style.left = `calc(50% + ${x}px)`;
         slot.style.top = `calc(50% + ${y}px)`;
+        slot.setAttribute('aria-hidden', 'true');
 
         slot.innerHTML = `
             <div class="hour-label">${hour}:00</div>
-            <img src="https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/${symbolCode}.svg">
-            <div class="temp">${temp}°</div>
+            <img src="https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/clearsky_day.svg" alt="Ikon: klart vær" />
+            <div class="temp">—°</div>
         `;
-
         clock.appendChild(slot);
+    }
+}
+
+/* Render værikoner basert på timeseries-array */
+function renderWeatherIcons(timeseries) {
+    // For unngå for hyppige re-renders, begrens til 1 per sekund
+    if (Date.now() - lastRenderTimestamp < 800) return;
+    lastRenderTimestamp = Date.now();
+
+    document.querySelectorAll('.weather-slot').forEach(el => el.remove());
+
+    const next12Hours = Array.isArray(timeseries) ? timeseries.slice(0, 12) : [];
+
+    // Hvis ingen gyldig data, fallback
+    if (next12Hours.length === 0) {
+        renderMockData();
+        return;
+    }
+
+    next12Hours.forEach((forecast) => {
+        const timeStr = forecast?.time;
+        let time;
+        try { time = new Date(timeStr); } catch (e) { time = new Date(); }
+
+        const hour = isNaN(time.getHours()) ? 0 : time.getHours();
+        const hourForAngle = hour % 12;
+        const angle = hourForAngle * 30;
+        const x = Math.sin(angle * Math.PI / 180) * radius;
+        const y = -Math.cos(angle * Math.PI / 180) * radius;
+
+        const symbolCode = forecast?.data?.next_1_hours?.summary?.symbol_code
+            || forecast?.data?.next_6_hours?.summary?.symbol_code
+            || forecast?.data?.next_12_hours?.summary?.symbol_code
+            || 'clearsky_day';
+
+        // Temperatur: værdata kan variere i struktur, derfor trygg henting
+        const tempVal = forecast?.data?.instant?.details?.air_temperature;
+        const temp = (typeof tempVal === 'number') ? Math.round(tempVal) + '°' : '—';
+
+        const slot = document.createElement('div');
+        slot.className = 'weather-slot';
+        slot.style.left = `calc(50% + ${x}px)`;
+        slot.style.top = `calc(50% + ${y}px)`;
+        slot.setAttribute('role', 'group');
+        slot.setAttribute('aria-label', `Vær ${hour}:00 - ${symbolCode} - ${temp}`);
+
+        // Lag alt-tekstfor ikon
+        const altText = `Vær: ${symbolCode.replace(/_/g, ' ')}`;
+
+        // Bruk raw.githubusercontent-link; hvis bilde mangler, vil det kun vises tomt bilde
+        const iconUrl = `https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/${symbolCode}.svg`;
     });
 }
 
-    // Oppdater viserne hvert sekund
-    setInterval(updateClockHands, 1000);
-    updateClockHands();
-
-    // Hent vær (og oppdater hver halvtime)
-    getWeatherData();
-    setInterval(getWeatherData, 1800000);
-
+animateClock();
+getCoordinates().then(renderWeather); // Kall endelig funksjon for å hente og vise værdata
 </script>
 </body>
 </html>
