@@ -46,12 +46,11 @@
             pointer-events: none;
         }
 
-        /* Vi bruker background-color istedenfor inline background for enkel styling */
         .hour-hand {
             width: 8px;
             height: 24%;
             background: #fff;
-            margin-left: -4px; /* halver bredden for å sentrere */
+            margin-left: -4px;
         }
         .min-hand {
             width: 6px;
@@ -103,7 +102,6 @@
             color: #aaa;
         }
 
-        /* Liten skjermtilpasning */
         @media (max-width: 480px) {
             :root { --clock-size: 320px; }
             .weather-slot { width: 56px; height: 68px; }
@@ -122,31 +120,23 @@
 <script>
 /*
   Forbedringer i denne filen:
-  - Bruker Geolocation API (med fallback til Oslo).
-  - Legger til caching i localStorage for å unngå unødvendige API-kall.
-  - Implementerer renderMockData() som fallback ved feil.
-  - Benytter requestAnimationFrame for jevn animasjon av viserne (inkl. sekunder).
-  - Robust tilgang til API-data med optional chaining og fallback-verdier.
-  - Legger til alt-tekst / aria-attributter for tilgjengelighet.
-  - Legger til forklaring om User-Agent / identifikasjon til met.no (nettlesere kan ikke sette User-Agent-header).
+  - Geolocation API (med fallback til Oslo).
+  - Caching i localStorage (25 min TTL).
+  - Fallback renderMockData() ved feil.
+  - requestAnimationFrame for glatt animasjon (inkl. sekund-dels-bevegelse).
+  - Robust datatilgang med optional chaining.
+  - Accessibility: alt-tekst og aria-attributter.
+  - Forklaring om User-Agent / From for met.no (nettlesere kan ikke sette User-Agent).
 */
 
-/* Konfigurasjon */
 const clock = document.getElementById('clock');
-const radius = 160; // px avstand fra sentrum for vær-ikoner (juster om nødvendig)
+const radius = 160;
 const WEATHER_CACHE_KEY = 'varklokke_weather_cache_v1';
 const WEATHER_CACHE_TTL = 25 * 60 * 1000; // 25 minutter
 const DEFAULT_COORDS = { lat: 59.91, lon: 10.75 }; // Oslo fallback
-const CONTACT_EMAIL = 'hohygen@gmail.com'; // Brukes for identifikasjon ved API-kall (se forklaring)
+const CONTACT_EMAIL = 'hohygen@gmail.com';
 
-/*
-  OBS: Nettlesere blokkerer innstilling av "User-Agent" header på fetch.
-  Met.no krever at klienten identifiseres (User-Agent eller From). 
-  Her setter vi 'From' og 'X-Requested-By' som en delvis identifikasjon, men anbefalt løsning
-  for produksjon er å gjøre API-kall fra en server/proxy der en riktig User-Agent kan settes.
-*/
-
-let lastRenderTimestamp = 0; // for å unngå for hyppige DOM-oppdateringer
+let lastRenderTimestamp = 0;
 
 /* Smooth klokkeanimajson med requestAnimationFrame */
 function animateClock() {
@@ -156,20 +146,19 @@ function animateClock() {
     const minutes = now.getMinutes() + seconds / 60;
     const hours = now.getHours() % 12 + minutes / 60;
 
-    const hourDeg = hours * 30; // 360/12
-    const minDeg = minutes * 6; // 360/60
+    const hourDeg = hours * 30;
+    const minDeg = minutes * 6;
 
     const hourHand = document.getElementById('hour-hand');
     const minHand = document.getElementById('min-hand');
 
-    // Vi benytter translate + rotate for å holde viserne sentrert
     hourHand.style.transform = `translate(-50%, 0) rotate(${hourDeg}deg)`;
     minHand.style.transform = `translate(-50%, 0) rotate(${minDeg}deg)`;
 
     requestAnimationFrame(animateClock);
 }
 
-/* Henter koordinater fra Geolocation API med fallback */
+/* Geolocation med timeout + fallback */
 function getCoordinates() {
     return new Promise((resolve) => {
         if (!navigator.geolocation) {
@@ -183,14 +172,14 @@ function getCoordinates() {
                 resolved = true;
                 resolve(DEFAULT_COORDS);
             }
-        }, 7000); // 7 sekunder timeout
+        }, 7000);
 
         navigator.geolocation.getCurrentPosition((pos) => {
             if (resolved) return;
             resolved = true;
             clearTimeout(fallbackTimer);
             resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude });
-        }, (err) => {
+        }, () => {
             if (resolved) return;
             resolved = true;
             clearTimeout(fallbackTimer);
@@ -199,7 +188,7 @@ function getCoordinates() {
     });
 }
 
-/* Hjelpefunksjon: lagre / hente cache */
+/* Caching helpers */
 function getCachedWeather() {
     try {
         const raw = localStorage.getItem(WEATHER_CACHE_KEY);
@@ -226,9 +215,8 @@ function setCachedWeather(data) {
     }
 }
 
-/* Render fallback/mock-data hvis API feiler */
+/* Fallback/mock rendering */
 function renderMockData() {
-    // Opprett 12 plasser med placeholder ikon og temperatur —
     document.querySelectorAll('.weather-slot').forEach(el => el.remove());
     const now = new Date();
     for (let i = 0; i < 12; i++) {
@@ -254,17 +242,14 @@ function renderMockData() {
     }
 }
 
-/* Render værikoner basert på timeseries-array */
+/* Render funksjon: legger til slots i DOM (inkl. appendChild) */
 function renderWeatherIcons(timeseries) {
-    // For unngå for hyppige re-renders, begrens til 1 per sekund
     if (Date.now() - lastRenderTimestamp < 800) return;
     lastRenderTimestamp = Date.now();
 
     document.querySelectorAll('.weather-slot').forEach(el => el.remove());
-
     const next12Hours = Array.isArray(timeseries) ? timeseries.slice(0, 12) : [];
 
-    // Hvis ingen gyldig data, fallback
     if (next12Hours.length === 0) {
         renderMockData();
         return;
@@ -286,7 +271,6 @@ function renderWeatherIcons(timeseries) {
             || forecast?.data?.next_12_hours?.summary?.symbol_code
             || 'clearsky_day';
 
-        // Temperatur: værdata kan variere i struktur, derfor trygg henting
         const tempVal = forecast?.data?.instant?.details?.air_temperature;
         const temp = (typeof tempVal === 'number') ? Math.round(tempVal) + '°' : '—';
 
@@ -297,16 +281,63 @@ function renderWeatherIcons(timeseries) {
         slot.setAttribute('role', 'group');
         slot.setAttribute('aria-label', `Vær ${hour}:00 - ${symbolCode} - ${temp}`);
 
-        // Lag alt-tekstfor ikon
         const altText = `Vær: ${symbolCode.replace(/_/g, ' ')}`;
-
-        // Bruk raw.githubusercontent-link; hvis bilde mangler, vil det kun vises tomt bilde
         const iconUrl = `https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/${symbolCode}.svg`;
+
+        slot.innerHTML = `
+            <div class="hour-label">${hour}:00</div>
+            <img src="${iconUrl}" alt="${altText}" onerror="this.src='https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/clearsky_day.svg'; this.alt='klart vær';" />
+            <div class="temp">${temp}</div>
+        `;
+
+        // Påfør slot i DOM (fikset: appendChild)
+        clock.appendChild(slot);
     });
 }
 
-animateClock();
-getCoordinates().then(renderWeather); // Kall endelig funksjon for å hente og vise værdata
+/* Hent værdata med caching og headers (From/X-Requested-By) */
+async function getWeatherData() {
+    try {
+        // Vis cache umiddelbart hvis tilgjengelig
+        const cached = getCachedWeather();
+        if (cached) {
+            renderWeatherIcons(cached.properties?.timeseries || []);
+        }
+
+        const coords = await getCoordinates();
+        const lat = coords.lat;
+        const lon = coords.lon;
+
+        const apiUrl = `https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`;
+        const headers = {
+            'Accept': 'application/json',
+            'From': CONTACT_EMAIL,
+            'X-Requested-By': `VarKlokke - ${CONTACT_EMAIL}`
+        };
+
+        const resp = await fetch(apiUrl, { headers });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+
+        setCachedWeather(data);
+        renderWeatherIcons(data?.properties?.timeseries || []);
+    } catch (error) {
+        console.error('Kunne ikke hente vær:', error);
+        const cached = getCachedWeather();
+        if (cached) {
+            renderWeatherIcons(cached.properties?.timeseries || []);
+        } else {
+            renderMockData();
+        }
+    }
+}
+
+/* Init: start animasjon og hent data */
+(function init() {
+    requestAnimationFrame(animateClock); // start animasjonen
+    getWeatherData(); // første henting
+    setInterval(getWeatherData, 30 * 60 * 1000); // oppdater hver 30. min
+})();
 </script>
 </body>
 </html>
