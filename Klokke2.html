@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Værklokke 12t</title>
+    <style>
+        :root {
+            --clock-size: 400px;
+            --bg-color: #1a1a2e;
+            --text-color: #ffffff;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: sans-serif;
+        }
+
+        .clock-container {
+            position: relative;
+            width: var(--clock-size);
+            height: var(--clock-size);
+            border: 8px solid #333;
+            border-radius: 50%;
+            background: radial-gradient(circle, #222 0%, #111 100%);
+        }
+
+        /* Selve klokkeviserne */
+        .hand {
+            position: absolute;
+            bottom: 50%;
+            left: 50%;
+            transform-origin: bottom;
+            background: white;
+            border-radius: 10px;
+            z-index: 10;
+        }
+
+        .hour-hand { width: 6px; height: 25%; }
+        .min-hand { width: 4px; height: 40%; background: #aaa; }
+        .center-dot {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 15px; height: 15px;
+            background: white;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+        }
+
+        /* Værelementene rundt */
+        .weather-slot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 60px;
+            height: 70px;
+            text-align: center;
+            transform: translate(-50%, -50%);
+            transition: all 0.5s ease;
+        }
+
+        .weather-slot img {
+            width: 40px;
+            height: 40px;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .temp {
+            font-size: 14px;
+            font-weight: bold;
+            margin-top: 2px;
+        }
+
+        .hour-label {
+            font-size: 10px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+
+<div class="clock-container" id="clock">
+    <div class="hand hour-hand" id="hour-hand"></div>
+    <div class="hand min-hand" id="min-hand"></div>
+    <div class="center-dot"></div>
+</div>
+
+<script>
+    // Konfigurasjon
+    const clock = document.getElementById('clock');
+    const radius = 160; // Hvor langt fra sentrum ikonene skal stå
+
+    function updateClockHands() {
+        const now = new Date();
+        const seconds = now.getSeconds();
+        const minutes = now.getMinutes();
+        const hours = now.getHours();
+
+        const hourDeg = (hours % 12) * 30 + (minutes / 60) * 30;
+        const minDeg = minutes * 6;
+
+        document.getElementById('hour-hand').style.transform = `translateX(-50%) rotate(${hourDeg}deg)`;
+        document.getElementById('min-hand').style.transform = `translateX(-50%) rotate(${minDeg}deg)`;
+    }
+
+    // 1. Start med å finne brukerens posisjon
+function finnMinPosisjon() {
+    if (navigator.geolocation) {
+        // Viser en melding i konsollen mens vi venter
+        console.log("Henter posisjon...");
+        
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                // Suksess! Bruk faktiske koordinater
+                const lat = pos.coords.latitude.toFixed(2);
+                const lon = pos.coords.longitude.toFixed(2);
+                console.log(`Posisjon funnet: ${lat}, ${lon}`);
+                getWeatherData(lat, lon);
+            },
+            (error) => {
+                // Brukeren sa nei eller noe gikk galt - bruk Oslo som fallback
+                console.warn("Kunne ikke hente posisjon, bruker standard (Oslo)");
+                getWeatherData(59.91, 10.75);
+            }
+        );
+    } else {
+        // Nettleseren støtter ikke Geolocation
+        getWeatherData(59.91, 10.75);
+    }
+}
+
+// 2. Oppdatert funksjon for å ta imot koordinater
+async function getWeatherData(lat, lon) {
+    try {
+        // MET API krever en unik User-Agent (identifikasjon) for profesjonelle apper,
+        // men for private prosjekter fungerer dette vanligvis fint:
+        const response = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`);
+        const data = await response.json();
+        
+        renderWeatherIcons(data.properties.timeseries);
+    } catch (error) {
+        console.error("Vær-tjenesten er utilgjengelig:", error);
+    }
+}
+
+// 3. Kjør funksjonen når siden lastes
+finnMinPosisjon();
+
+// Oppdater været hver halvtime (valgfritt, men lurt)
+setInterval(finnMinPosisjon, 1800000);
+
+    function renderWeatherIcons(timeseries) {
+    // Fjern gamle ikoner
+    document.querySelectorAll('.weather-slot').forEach(el => el.remove());
+
+    // Vi henter de neste 12 timene fra varselet
+    const next12Hours = timeseries.slice(0, 12);
+
+    next12Hours.forEach((forecast) => {
+        const time = new Date(forecast.time);
+        const hour = time.getHours(); // Henter timen (0-23)
+        
+        // Modulo 12 sørger for at f.eks. kl 13:00 blir 1:00 på urskiven
+        const hourForAngle = hour % 12; 
+        
+        // Kalkuler posisjon: 12 er 0 grader, 3 er 90 grader, osv.
+        const angle = hourForAngle * 30; 
+        const x = Math.sin(angle * Math.PI / 180) * radius;
+        const y = -Math.cos(angle * Math.PI / 180) * radius;
+
+        const symbolCode = forecast.data.next_1_hours?.summary?.symbol_code || "clearsky_day";
+        const temp = Math.round(forecast.data.instant.details.air_temperature);
+
+        const slot = document.createElement('div');
+        slot.className = 'weather-slot';
+        slot.style.left = `calc(50% + ${x}px)`;
+        slot.style.top = `calc(50% + ${y}px)`;
+
+        slot.innerHTML = `
+            <div class="hour-label">${hour}:00</div>
+            <img src="https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/${symbolCode}.svg">
+            <div class="temp">${temp}°</div>
+        `;
+
+        clock.appendChild(slot);
+    });
+}
+
+    // Oppdater viserne hvert sekund
+    setInterval(updateClockHands, 1000);
+    updateClockHands();
+
+    // Hent vær (og oppdater hver halvtime)
+    getWeatherData();
+    setInterval(getWeatherData, 1800000);
+
+</script>
+</body>
+</html>
