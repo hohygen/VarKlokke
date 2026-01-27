@@ -1,14 +1,14 @@
 <!DOCTYPE html>
-<html lang="no">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Værklokke 12t</title>
-    <style>
-        :root {
-            --clock-size: 400px;
-            --bg-color: #1a1a2e;
-            --text-color: #ffffff;
+    <title>Clock</title>
+    <script>
+        function init() {
+            // Initialize the clock and weather data
+            getWeatherData();
+            requestAnimationFrame(animateClock);
         }
 
         body {
@@ -339,5 +339,26 @@ async function getWeatherData() {
     setInterval(getWeatherData, 30 * 60 * 1000); // oppdater hver 30. min
 })();
 </script>
+        function renderWeatherIcons() {
+            const slot = document.createElement('div');
+            // Your logic to create weather icons
+            // ...
+            clock.appendChild(slot);
+        }
+
+        function animateClock() {
+            // Your logic to animate the clock
+            // ...
+            requestAnimationFrame(animateClock);
+        }
+
+        function getWeatherData() {
+            // Your logic to fetch weather data
+            // ...
+        }
+    </script>
+</head>
+<body onload="init()">
+    <div id="clock"></div>
 </body>
 </html>
