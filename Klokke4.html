@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="no">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Min Værklokke</title>
+    <style>
+        :root {
+            --clock-size: 450px;
+            --bg-color: #0f172a;
+            --text-color: #f8fafc;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        .clock-container {
+            position: relative;
+            width: var(--clock-size);
+            height: var(--clock-size);
+            border: 12px solid #1e293b;
+            border-radius: 50%;
+            background: radial-gradient(circle, #1e293b 0%, #0f172a 100%);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .hand {
+            position: absolute;
+            bottom: 50%;
+            left: 50%;
+            transform-origin: bottom;
+            background: #f1f5f9;
+            border-radius: 10px;
+            z-index: 10;
+            transition: transform 0.5s cubic-bezier(0.4, 2.3, 0.3, 1);
+        }
+
+        .hour-hand { width: 8px; height: 25%; }
+        .min-hand { width: 4px; height: 40%; background: #94a3b8; }
+        
+        .center-dot {
+            position: absolute;
+            top: 50%; left: 50%;
+            width: 16px; height: 16px;
+            background: #f1f5f9;
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 11;
+        }
+
+        .weather-slot {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 70px;
+            height: 80px;
+            text-align: center;
+            transform: translate(-50%, -50%);
+        }
+
+        .weather-slot img {
+            width: 45px;
+            height: 45px;
+            filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3));
+        }
+
+        .temp { font-size: 16px; font-weight: 700; margin-top: -2px; }
+        .hour-label { font-size: 11px; color: #64748b; margin-bottom: 2px; }
+
+        #status {
+            position: fixed;
+            top: 20px;
+            color: #64748b;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+
+<div id="status" aria-live="polite">Venter på posisjon...</div>
+
+<div class="clock-container" id="clock">
+    <div class="hand hour-hand" id="hour-hand"></div>
+    <div class="hand min-hand" id="min-hand"></div>
+    <div class="center-dot"></div>
+</div>
+
+<script>
+    const clock = document.getElementById('clock');
+    const statusText = document.getElementById('status');
+    const hourHand = document.getElementById('hour-hand');
+    const minHand = document.getElementById('min-hand');
+    const radius = 175; 
+
+    function setHandRotation(element, degrees) {
+        const prev = Number(element.dataset.prevDeg);
+        // Avoid reverse animation when angle wraps from ~360 to 0.
+        if (!Number.isNaN(prev) && prev - degrees > 180) {
+            element.style.transition = 'none';
+            element.style.transform = `translateX(-50%) rotate(${degrees}deg)`;
+            // Force reflow so transition reset takes effect immediately.
+            void element.offsetWidth;
+            element.style.transition = '';
+        } else {
+            element.style.transform = `translateX(-50%) rotate(${degrees}deg)`;
+        }
+        element.dataset.prevDeg = String(degrees);
+    }
+
+    // 1. Funksjon for å oppdatere klokkeviserne
+    function updateClockHands() {
+        const now = new Date();
+        const seconds = now.getSeconds();
+        const minutes = now.getMinutes();
+        const hours = now.getHours();
+
+        const hourDeg = (hours % 12) * 30 + (minutes / 60) * 30 + (seconds / 3600) * 30;
+        const minDeg = minutes * 6 + seconds * 0.1;
+
+        setHandRotation(hourHand, hourDeg);
+        setHandRotation(minHand, minDeg);
+    }
+
+    // 2. Funksjon for å vente på GPS-koordinater
+    function hentKoordinater() {
+        return new Promise((resolve) => {
+            if (!navigator.geolocation) {
+                resolve({ lat: 59.91, lon: 10.75 });
+                return;
+            }
+            navigator.geolocation.getCurrentPosition(
+                (pos) => resolve({ lat: Number(pos.coords.latitude.toFixed(4)), lon: Number(pos.coords.longitude.toFixed(4)) }),
+                () => resolve({ lat: 59.91, lon: 10.75 }), // Oslo som fallback
+                { timeout: 10000, maximumAge: 600000 }
+            );
+        });
+    }
+
+    // 3. Funksjon for å hente værdata fra MET
+    async function getWeatherData(lat, lon) {
+        try {
+            statusText.innerText = `Henter vær for ${lat}, ${lon}...`;
+            const response = await fetch(`https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=${lat}&lon=${lon}`, {
+                headers: { 'User-Agent': 'VaerKlokkeProsjekt/1.0 (din-epost@eksempel.no)' }
+            });
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            const data = await response.json();
+            const series = data?.properties?.timeseries;
+            if (!Array.isArray(series)) {
+                throw new Error('Mangler timeseries i API-respons');
+            }
+            renderWeatherIcons(series);
+            statusText.innerText = `Oppdatert ${new Date().toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' })}`;
+        } catch (error) {
+            statusText.innerText = "Kunne ikke hente værdata.";
+        }
+    }
+
+    // 4. Funksjon for å tegne værikonene på riktig plass (vinkel)
+    function renderWeatherIcons(timeseries) {
+        document.querySelectorAll('.weather-slot').forEach(el => el.remove());
+
+        // Tar de neste 12 timene
+        timeseries.slice(0, 12).forEach((forecast) => {
+            const time = new Date(forecast.time);
+            const hour = time.getHours();
+            
+            // Finn vinkel basert på timetallet (0-11)
+            const hourForAngle = hour % 12; 
+            const angle = hourForAngle * 30; 
+            
+            const x = Math.sin(angle * Math.PI / 180) * radius;
+            const y = -Math.cos(angle * Math.PI / 180) * radius;
+
+            const symbolCode = forecast.data.next_1_hours?.summary?.symbol_code || "clearsky_day";
+            const temp = Math.round(forecast.data.instant.details.air_temperature);
+
+            const slot = document.createElement('div');
+            slot.className = 'weather-slot';
+            slot.style.left = `calc(50% + ${x}px)`;
+            slot.style.top = `calc(50% + ${y}px)`;
+
+            const hourLabel = document.createElement('div');
+            hourLabel.className = 'hour-label';
+            hourLabel.textContent = `${hour}:00`;
+
+            const img = document.createElement('img');
+            img.src = `https://raw.githubusercontent.com/metno/weathericons/master/weather/svg/${symbolCode}.svg`;
+            img.alt = `Værsymbol for kl ${hour}:00`;
+            img.loading = 'lazy';
+            img.decoding = 'async';
+
+            const tempLabel = document.createElement('div');
+            tempLabel.className = 'temp';
+            tempLabel.textContent = `${temp}°`;
+
+            slot.appendChild(hourLabel);
+            slot.appendChild(img);
+            slot.appendChild(tempLabel);
+            clock.appendChild(slot);
+        });
+    }
+
+    // 5. START-rekkefølge
+    async function init() {
+        updateClockHands();
+        setInterval(updateClockHands, 1000);
+
+        const coords = await hentKoordinater();
+        await getWeatherData(coords.lat, coords.lon);
+        
+        // Oppdater været hver halvtime
+        setInterval(() => getWeatherData(coords.lat, coords.lon), 1800000);
+    }
+
+    init();
+</script>
+</body>
+</html>
